@@ -1,0 +1,181 @@
+################################################################################
+## @Title: SummaryNum.R
+## @Author: Julian Ibarguen
+## @Contact: jibarguen@iom.int
+## @Date created: 27.02.2020
+## @Last updated: 14.07.2020
+## @Status: Maturing
+## -----------------------------------------------------------------------------
+## Notes:
+##
+## -----------------------------------------------------------------------------
+#' @name SummaryNum
+#' @title Summarize categorical variables
+#'
+#' @description Summarize a set of categorical variables by given group
+#' variable/s.
+#'
+#' @usage
+#' SummaryNum(data, quest, groups = NULL, export.tbl = FALSE)
+#'
+#' @param data a data frame containing at least the variables to analysis and to
+#' group by
+#' @param quest a string containing the name of the variable to be analyzed
+#' @param groups a character vector containing the names of the variables to
+#' group by (up to two grouping variables).
+#' @param export.tbl Logical indicating if table should be export to a .csv file
+#'
+#' @return a data frame summarized with relevant statistics
+#'
+#' @examples
+#' data <- data.frame(
+#'   group1 = sample(LETTERS[1:3], 100, replace = TRUE),
+#'   group2 = sample(letters[1:5], 100, replace = TRUE),
+#'   quest1 = sample(1:100, 100, replace = TRUE),
+#'   quest2 = rnorm(100)
+#' )
+#' 
+#' quest <- grep("quest", colnames(data), value = TRUE)
+#' groups <- grep("group", colnames(data), value = TRUE)
+#' 
+#' lapply(quest, function(x) SummaryNum(data, x, groups))
+#' 
+#' @export
+## -----------------------------------------------------------------------------
+SummaryNum <- function(data, quest, groups = NULL, export.tbl = FALSE) {
+
+  ########################### PREELIMNARIES AND QUOSURES #######################
+  
+  # Convert arguments to symbols
+  quest <- dplyr::sym(quest)
+  if (length(groups) > 1) {
+    groups <- dplyr::syms(groups)
+  } else if (length(groups) == 1) {
+    groups <- dplyr::sym(groups) 
+  }
+
+  ########################## COMPUTE FOR TOTAL/LEVEL 1 #########################
+  # Total case summary
+  total.s.case <- data %>%
+    { 
+      if (length(groups) > 1) {
+        dplyr::mutate(., !!groups[[2]] := "total") %>%
+          dplyr::group_by(!!!groups)
+        
+      } else if (length(groups) == 1) {
+        dplyr::mutate(., !!groups := "total") %>%
+          dplyr::group_by(!!groups)
+      } else .
+    } %>%
+    dplyr::summarise(
+      question = as.character(quest),
+      #!!groups[[1]] := "total", ## Would need to do for admin2
+      N = dplyr::n(),
+      n.in = sum(!is.na(!!quest)),
+      n.ex = sum(is.na(!!quest)),
+      .groups = "drop"
+    )
+  
+  # Total summary table and join case summary
+  total.s.data <- data %>%
+    dplyr::mutate(!!quest := as.numeric(!!quest)) %>%
+    #dplyr::mutate_at(as.character(groups), ~ "total")
+    { 
+      if (length(groups) > 1) {
+        dplyr::mutate(., !!groups[[2]] := "total") %>%
+          dplyr::group_by(!!groups[[1]])
+      } else if (length(groups) == 1) {
+        dplyr::mutate(., !!groups := "total") %>%
+          dplyr::group_by(!!groups)
+      } else .
+    } %>%
+    dplyr::summarise(
+      #!!groups[[1]] := "total",
+      sum = sum(!!quest, na.rm = TRUE),
+      min = min(!!quest, na.rm = TRUE),
+      max = max(!!quest, na.rm = TRUE),
+      avg = mean(!!quest, na.rm = TRUE),
+      sd = sd(!!quest, na.rm = TRUE),
+      Q25 = quantile(!!quest, 0.25, na.rm = TRUE),
+      med = median(!!quest, na.rm = TRUE),
+      Q75 = quantile(!!quest, 0.75, na.rm = TRUE),
+      IQR = IQR(!!quest, na.rm = TRUE),
+      .groups = "drop_last"
+    ) %>%
+    dplyr::mutate(question = as.character(quest), perc = prop.table(sum)) %>%
+    dplyr::ungroup() %>%
+    dplyr::full_join(total.s.case, .)
+
+  ############################## COMPUTE FOR GROUP #############################
+  
+  # Grouped case summary
+  group1.s.case <- data %>%
+    { 
+      if (length(groups) > 1) { 
+        dplyr::group_by(., !!!groups)
+      } else if (length(groups) == 1) {
+        dplyr::group_by(., !!groups)
+      } else .
+    } %>%
+    dplyr::summarise(
+      question = as.character(quest),
+      N = dplyr::n(),
+      n.in = sum(!is.na(!!quest)),
+      n.ex = sum(is.na(!!quest)),
+      .groups = "drop"
+    )
+ 
+  # Grouped summary table and join case summary
+  group1.s.data <- data %>%
+    dplyr::mutate(!!quest := as.numeric(!!quest)) %>%
+    { 
+      if (length(groups) > 1) { 
+        dplyr::group_by(., !!!groups)
+      } else if (length(groups) == 1) {
+        dplyr::group_by(., !!groups)
+      } else .
+    } %>%
+    dplyr::summarise(
+      sum = sum(!!quest, na.rm = TRUE),
+      perc = prop.table(sum),
+      min = min(!!quest, na.rm = TRUE),
+      max = max(!!quest, na.rm = TRUE),
+      avg = mean(!!quest, na.rm = TRUE),
+      sd = sd(!!quest, na.rm = TRUE),
+      Q25 = quantile(!!quest, 0.25, na.rm = TRUE),
+      med = median(!!quest, na.rm = TRUE),
+      Q75 = quantile(!!quest, 0.75, na.rm = TRUE),
+      IQR = IQR(!!quest, na.rm = TRUE),
+      .groups = "drop_last"
+    ) %>%
+    dplyr::mutate(question = as.character(quest), perc = prop.table(sum)) %>%
+    dplyr::ungroup() %>%
+    dplyr::full_join(group1.s.case, .)
+
+  ############################### JOIN TOTAL AND GROUP #########################
+  
+  out.table <- dplyr::bind_rows(total.s.data, group1.s.data) %>%
+    dplyr::distinct(.) %>%
+    dplyr::select(
+      question, dplyr::matches(as.character(groups)), 
+      dplyr::matches("^N$|^n\\.[ie][nx]$"), sum, perc, 
+      dplyr::everything()
+    )
+  
+  ############################### OUTPUT #######################################
+  
+  if (export.tbl == TRUE) {
+    # Get file names
+    date.export <- gsub("^\\d{1,2}", "", gsub("-", "", Sys.Date()))
+    quest.name <- unique(dplyr::pull(out.table, question))
+    quest.name <- gsub(
+      "[[:punct:]]", "", gsub("(.{1,25})(.*$)", "\\1", quest.name)
+    )
+    file.name <- paste0(date.export, ".", quest.name, ".csv")
+    utils::write.csv(out.table, paste0("./output_tables/", file.name))
+    cat("\nSummary table exported to:\n", paste0("~/output_tables/", file.name))
+  }
+  # Print in to console
+  return(out.table)
+}
+
