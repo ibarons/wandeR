@@ -1,2 +1,2 @@
 # wandeR
-Adhoc useful functions for the bag; to take from place to place
+Useful functions for the bag; take them from place to place
